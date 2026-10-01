@@ -852,3 +852,193 @@ test("sensor components inside templates can open Configure and render", async (
   await expect(modal.getByRole("status")).toBeEmpty();
   await modal.getByRole("button", { name: "Cancel", exact: true }).click();
 });
+
+async function addLayerFixture(page) {
+  return page.evaluate(() => {
+    const p = window.panel;
+    const layers = [];
+    for (const [type, label] of [
+      ["rectangle", "Back"],
+      ["ellipse", "Middle"],
+      ["text", "Front"],
+    ]) {
+      p.add(type);
+      p.element.label = label;
+      layers.push({ id: p.element.id, label, x: p.element.x, y: p.element.y });
+    }
+    p.edited();
+    return layers;
+  });
+}
+
+test("layer arrows and keyboard reorder depth without moving components and support undo", async ({
+  page,
+}) => {
+  const layers = await addLayerFixture(page);
+  const front = page.locator(`.layer-row[data-layer-id="${layers[2].id}"]`);
+  const back = page.locator(`.layer-row[data-layer-id="${layers[0].id}"]`);
+  await expect(
+    front.getByRole("button", { name: "Move layer up", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    back.getByRole("button", { name: "Move layer down", exact: true }),
+  ).toBeDisabled();
+  await front
+    .getByRole("button", { name: "Move layer down", exact: true })
+    .click();
+  expect(
+    await page.evaluate(() =>
+      window.panel.document.elements.map((e) => e.label),
+    ),
+  ).toEqual(["Back", "Front", "Middle"]);
+  await front.locator(".layer").focus();
+  await page.keyboard.press("ArrowDown");
+  expect(
+    await page.evaluate(() =>
+      window.panel.document.elements.map((e) => e.label),
+    ),
+  ).toEqual(["Front", "Back", "Middle"]);
+  await page.keyboard.press("ArrowUp");
+  expect(
+    await page.evaluate(() =>
+      window.panel.document.elements.map((e) => e.label),
+    ),
+  ).toEqual(["Back", "Front", "Middle"]);
+  await page.getByRole("button", { name: "Undo", exact: false }).click();
+  expect(
+    await page.evaluate(() =>
+      window.panel.document.elements.map((e) => e.label),
+    ),
+  ).toEqual(["Front", "Back", "Middle"]);
+  expect(
+    await page.evaluate(() =>
+      window.panel.document.elements
+        .map(({ id, label, x, y }) => ({ id, label, x, y }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    ),
+  ).toEqual([...layers].sort((a, b) => a.label.localeCompare(b.label)));
+});
+
+test("dragging layer rows changes front/back order and never adds a sensor", async ({
+  page,
+}) => {
+  const layers = await addLayerFixture(page);
+  const row = (id) => page.locator(`.layer-row[data-layer-id="${id}"]`);
+  await row(layers[0].id).dragTo(row(layers[2].id), {
+    targetPosition: { x: 15, y: 2 },
+  });
+  expect(
+    await page.evaluate(() =>
+      window.panel.document.elements.map((e) => e.label),
+    ),
+  ).toEqual(["Middle", "Front", "Back"]);
+  const middleBox = await row(layers[1].id).boundingBox();
+  await row(layers[0].id).dragTo(row(layers[1].id), {
+    targetPosition: { x: 15, y: middleBox.height - 2 },
+  });
+  expect(
+    await page.evaluate(() =>
+      window.panel.document.elements.map((e) => e.label),
+    ),
+  ).toEqual(["Back", "Middle", "Front"]);
+  await row(layers[0].id).dragTo(page.locator(".stage"));
+  await expect(page.locator(".el")).toHaveCount(3);
+});
+
+async function addSelectionFixture(page) {
+  return page.evaluate(() => {
+    const p = window.panel;
+    for (let index = 0; index < 3; index++) {
+      p.add("rectangle");
+      Object.assign(p.element, {
+        x: 20 + index * 60,
+        y: 20,
+        width: 30,
+        height: 30,
+        label: `Block ${index + 1}`,
+      });
+    }
+    const elements = p.document.elements.map((e) => ({
+      id: e.id,
+      x: e.x,
+      y: e.y,
+    }));
+    p.selected = null;
+    p.undoStack = [];
+    p.dirty = false;
+    p.render();
+    p.queuePreview();
+    return elements;
+  });
+}
+
+test("modifier clicks select a group and dragging moves it as one undo step", async ({
+  page,
+}) => {
+  const elements = await addSelectionFixture(page);
+  const hit = (id) => page.locator(`.el[data-id="${id}"] .hit-area`);
+  await hit(elements[0].id).click();
+  await hit(elements[1].id).click({ modifiers: ["Shift"] });
+  await hit(elements[2].id).click({ modifiers: ["Meta"] });
+  await expect(page.locator(".el.selected")).toHaveCount(3);
+  await hit(elements[2].id).click({ modifiers: ["Control"] });
+  await expect(page.locator(".el.selected")).toHaveCount(2);
+  const box = await hit(elements[0].id).boundingBox();
+  const zoom = await page.evaluate(() => window.panel.zoom);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    box.x + box.width / 2 + 16 * zoom,
+    box.y + box.height / 2 + 8 * zoom,
+  );
+  await page.mouse.up();
+  expect(
+    await page.evaluate(() =>
+      window.panel.document.elements.map(({ id, x, y }) => ({ id, x, y })),
+    ),
+  ).toEqual(
+    elements.map((e, index) => ({
+      ...e,
+      x: e.x + (index < 2 ? 16 : 0),
+      y: e.y + (index < 2 ? 8 : 0),
+    })),
+  );
+  expect(await page.evaluate(() => window.panel.undoStack.length)).toBe(1);
+  await page.getByRole("button", { name: "Undo", exact: false }).click();
+  expect(
+    await page.evaluate(() =>
+      window.panel.document.elements.map(({ id, x, y }) => ({ id, x, y })),
+    ),
+  ).toEqual(elements);
+});
+
+test("marquee selection can add with Ctrl and move or delete the group", async ({
+  page,
+}) => {
+  const elements = await addSelectionFixture(page);
+  const stage = await page.locator(".stage").boundingBox();
+  const zoom = await page.evaluate(() => window.panel.zoom);
+  async function marquee(x1, y1, x2, y2) {
+    await page.mouse.move(stage.x + x1 * zoom, stage.y + y1 * zoom);
+    await page.mouse.down();
+    await page.mouse.move(stage.x + x2 * zoom, stage.y + y2 * zoom, {
+      steps: 4,
+    });
+    await page.mouse.up();
+  }
+  await marquee(10, 10, 120, 70);
+  await expect(page.locator(".el.selected")).toHaveCount(2);
+  await page.keyboard.press("ArrowRight");
+  expect(
+    await page.evaluate(() => window.panel.document.elements.map((e) => e.x)),
+  ).toEqual([21, 81, 140]);
+  await page.keyboard.down("Control");
+  await marquee(130, 10, 185, 70);
+  await page.keyboard.up("Control");
+  await expect(page.locator(".el.selected")).toHaveCount(3);
+  await page.keyboard.press("Delete");
+  await expect(page.locator(".el")).toHaveCount(0);
+  await page.getByRole("button", { name: "Undo", exact: false }).click();
+  await expect(page.locator(".el")).toHaveCount(3);
+  expect(elements).toHaveLength(3);
+});
