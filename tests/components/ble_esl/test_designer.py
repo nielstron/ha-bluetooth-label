@@ -395,7 +395,7 @@ async def test_export_yaml_is_a_ready_to_use_write_action(hass, wolink_entry):
     assert result["validation_errors"] == []
     assert result["warnings"] == []
     service = yaml.safe_load(result["service"])
-    assert service["action"] == "ble_esl.write_guarded"
+    assert service["action"] == "ble_esl.write"
     assert service["data"] == {
         "background": "white",
         "payload": payload,
@@ -1164,7 +1164,7 @@ async def test_automation_draft_uses_current_design_and_registered_device(hass, 
     assert config["conditions"] == []
     assert config["actions"][0]["target"] == {"device_id": wolink_entry.runtime_data.device_id}
     assert config["actions"][0]["data"] == {"use_saved_design": True}
-    assert config["actions"][0]["action"] == "ble_esl.write_guarded"
+    assert config["actions"][0]["action"] == "ble_esl.write"
     assert config["alias"] == wolink_entry.title
     assert "id" not in config
     await async_validate_config_item(hass, "designer-test", {**config, "id": "designer-test"})

@@ -50,6 +50,18 @@ write:
             - "black"
             - "red"
             - "yellow"
+    debounce_override_ms:
+      selector:
+        number:
+          min: 0
+          max: 120000
+          step: 1000
+          mode: box
+          unit_of_measurement: ms
+    skip_unchanged:
+      default: true
+      selector:
+        boolean:
     dry_run:
       required: false
       example: 'false'
@@ -107,6 +119,10 @@ write_guarded:
             - "black"
             - "red"
             - "yellow"
+    skip_unchanged:
+      default: true
+      selector:
+        boolean:
     dry_run:
       required: false
       example: 'false'

@@ -58,12 +58,10 @@ from .const import (
     CONF_DEBOUNCE_MS,
     CONF_DISPLAY_ROTATION,
     CONF_MODEL,
-    CONF_PREVENT_DUPLICATE_SEND,
     CONF_RETRY_COUNT,
     DATA_LOCK,
     DEFAULT_DEBOUNCE_MS,
     DEFAULT_MODEL,
-    DEFAULT_PREVENT_DUPLICATE_SEND,
     DEFAULT_RETRY_COUNT,
     DOMAIN,
     SERVICE_WRITE,
@@ -108,6 +106,8 @@ WRITE_SERVICE_SCHEMA = vol.Schema(
         vol.Optional("rotate"): vol.All(vol.Coerce(int), vol.In((0, 90, 180, 270))),
         vol.Optional("background"): _color,
         vol.Optional("dry_run"): cv.boolean,
+        vol.Optional("skip_unchanged", default=True): cv.boolean,
+        vol.Optional("debounce_override_ms"): vol.All(vol.Coerce(int), vol.Range(min=0)),
     },
     extra=vol.ALLOW_EXTRA,
 )
@@ -146,7 +146,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
         hass,
         DOMAIN,
         SERVICE_WRITE_GUARDED,
-        partial(_async_write_guarded, hass),
+        partial(_async_write, hass),
         schema=WRITE_GUARDED_SERVICE_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
     )
@@ -394,8 +394,10 @@ async def build_write_job_from_data(
                 )
             )
     image_png = await hass.async_add_executor_job(encode_png, image)
-    if lifecycle_generation == data.lifecycle_generation and (
-        preview_generation is None or preview_generation == data.request_generation
+    if (
+        lifecycle_generation == data.lifecycle_generation
+        and (preview_generation is None or preview_generation == data.request_generation)
+        and image_png != data.preview_coordinator.data
     ):
         data.preview_coordinator.async_set_updated_data(image_png)
         data.image_store.set_preview(image_png, now())
@@ -831,36 +833,19 @@ def schedule_debounced_write(hass: HomeAssistant, job: WriteJob, delay_s: float)
 
 
 async def _async_write(hass: HomeAssistant, service: ServiceCall) -> ServiceResponse:
-    """ble_esl.write: always send (unless dry_run)."""
-    dry_run = service.data.get("dry_run", False)
-
-    async def handle(entry: BleEslConfigEntry) -> WriteOutcome:
-        data = entry.runtime_data
-        preview_generation: int | None = None
-        if not dry_run:
-            # A newer physical write supersedes guarded work still rendering,
-            # without making concurrent plain writes cancel one another.
-            data.request_generation += 1
-            preview_generation = data.request_generation
-            cancel_pending_write(data)
-        job = await build_write_job(hass, entry, service, preview_generation=preview_generation)
-        if dry_run:
-            return WriteOutcome("preview")
-        return await run_ble_write(hass, job)
-
-    return await _for_each_target(hass, service, handle)
-
-
-async def _async_write_guarded(hass: HomeAssistant, service: ServiceCall) -> ServiceResponse:
-    """ble_esl.write_guarded: duplicate guard, write lock, debounce, then send."""
+    """Write with lock/debounce guards; unchanged images are skipped by default."""
     dry_run = service.data.get("dry_run", False)
 
     async def handle(entry: BleEslConfigEntry) -> WriteOutcome:
         data = entry.runtime_data
         request_generation: int | None = None
+        preview_generation: int | None = None
+        skip_unchanged = service.data.get("skip_unchanged", True)
         if not dry_run:
             data.request_generation += 1
-            request_generation = data.request_generation
+            preview_generation = data.request_generation
+            if skip_unchanged:
+                request_generation = preview_generation
             # Invalidate a previous debounce as soon as this request arrives,
             # even if its render takes longer than the old timer.
             cancel_pending_write(data)
@@ -869,12 +854,10 @@ async def _async_write_guarded(hass: HomeAssistant, service: ServiceCall) -> Ser
             entry,
             service,
             request_generation=request_generation,
-            preview_generation=request_generation,
+            preview_generation=preview_generation,
         )
         options = {**entry.data, **entry.options}
-        job.prevent_duplicate_send = bool(
-            options.get(CONF_PREVENT_DUPLICATE_SEND, DEFAULT_PREVENT_DUPLICATE_SEND)
-        )
+        job.prevent_duplicate_send = skip_unchanged
 
         if dry_run:
             # Preview only (README): leaves duplicate detection untouched.

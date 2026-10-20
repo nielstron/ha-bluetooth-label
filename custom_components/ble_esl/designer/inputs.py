@@ -66,4 +66,8 @@ class DesignInputs:
             if entity_id not in entities and domain not in domains and not all_states:
                 continue
             self.track(entry_id)
-            self.hass.bus.async_fire(INPUTS_CHANGED, {"entry_id": entry_id})
+            self.hass.bus.async_fire(
+                INPUTS_CHANGED,
+                {"entry_id": entry_id, "entity_id": entity_id},
+                context=event.context,
+            )

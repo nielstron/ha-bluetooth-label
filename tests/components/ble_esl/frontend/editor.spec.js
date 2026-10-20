@@ -1970,7 +1970,7 @@ test("new automation links the unsaved design and current ESL input changes", as
     },
   ]);
   expect(config.conditions).toEqual([]);
-  expect(config.actions[0].action).toBe("ble_esl.write_guarded");
+  expect(config.actions[0].action).toBe("ble_esl.write");
   expect(config.actions[0].data.use_saved_design).toBe(true);
   expect(config.actions[0].target).toEqual({ device_id: "demo-device-0" });
   expect(config.actions[0].data).toEqual({ use_saved_design: true });

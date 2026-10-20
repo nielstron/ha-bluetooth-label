@@ -299,7 +299,10 @@ async def test_saved_design_service_needs_no_embedded_payload(hass, wolink_entry
     )
 
     for schema in (WRITE_SERVICE_SCHEMA, WRITE_GUARDED_SERVICE_SCHEMA):
-        assert schema({"use_saved_design": True}) == {"use_saved_design": True}
+        assert schema({"use_saved_design": True}) == {
+            "use_saved_design": True,
+            "skip_unchanged": True,
+        }
 
 
 async def test_saved_inputs_follow_edits_and_template_dependencies(hass, wolink_entry):
@@ -315,7 +318,7 @@ async def test_saved_inputs_follow_edits_and_template_dependencies(hass, wolink_
     events.clear()
     hass.states.async_set("sensor.color", "black")
     await hass.async_block_till_done()
-    assert events == [{"entry_id": wolink_entry.entry_id}]
+    assert events == [{"entry_id": wolink_entry.entry_id, "entity_id": "sensor.color"}]
     source["elements"][0]["entity_id"] = "binary_sensor.other"
     source["elements"][0]["field_templates"] = {}
     await designer.save(wolink_entry, source)
@@ -327,7 +330,7 @@ async def test_saved_inputs_follow_edits_and_template_dependencies(hass, wolink_
     assert events == []
     hass.states.async_set("binary_sensor.other", "on")
     await hass.async_block_till_done()
-    assert events == [{"entry_id": wolink_entry.entry_id}]
+    assert events == [{"entry_id": wolink_entry.entry_id, "entity_id": "binary_sensor.other"}]
 
 
 async def test_saved_inputs_retrack_conditional_reads_and_stop_on_unload(hass, wolink_entry):
@@ -352,7 +355,7 @@ async def test_saved_inputs_retrack_conditional_reads_and_stop_on_unload(hass, w
     events.clear()
     hass.states.async_set("sensor.backup_color", "black")
     await hass.async_block_till_done()
-    assert events == [{"entry_id": wolink_entry.entry_id}]
+    assert events == [{"entry_id": wolink_entry.entry_id, "entity_id": "sensor.backup_color"}]
     designer.inputs.untrack(wolink_entry.entry_id)
     events.clear()
     hass.states.async_set("sensor.backup_color", "red")
@@ -361,4 +364,4 @@ async def test_saved_inputs_retrack_conditional_reads_and_stop_on_unload(hass, w
     designer.inputs.track(wolink_entry.entry_id)
     hass.states.async_set("sensor.backup_color", "black")
     await hass.async_block_till_done()
-    assert events == [{"entry_id": wolink_entry.entry_id}]
+    assert events == [{"entry_id": wolink_entry.entry_id, "entity_id": "sensor.backup_color"}]
