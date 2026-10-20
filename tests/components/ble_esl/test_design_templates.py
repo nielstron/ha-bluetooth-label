@@ -325,7 +325,7 @@ async def test_websocket_lists_and_applies_a_template(hass, wolink_entry, hass_w
     assert draft["triggers"] == [{"trigger": "time", "at": "18:30:00"}]
     # The date template names no alias: the new automation takes the tag's title.
     assert draft["alias"] == wolink_entry.title
-    assert draft["actions"][0]["action"] == "ble_esl.write"
+    assert draft["actions"][0]["action"] == "ble_esl.write_guarded"
     assert "{{ now()" in yaml.dump(draft["actions"])
 
     await client.send_json(

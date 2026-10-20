@@ -94,7 +94,7 @@ def export_yaml(
     payload = plain(payload)
     live = None if live is None else plain(live)
     service = {
-        "action": "ble_esl.write",
+        "action": "ble_esl.write_guarded",
         "target": {"device_id": device_id or "<your device>"},
         "data": {"background": background, "payload": payload},
     }

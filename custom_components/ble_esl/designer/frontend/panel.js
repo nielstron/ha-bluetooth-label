@@ -1,4 +1,8 @@
-import { renderElementRotation } from "./editor/rotation-control.js";
+import { materialIcon } from "./editor/material-icons.js";
+import {
+  renderElementRotation,
+  syncRotationInputs,
+} from "./editor/rotation-control.js";
 import { t, language, rerenderWithDialogs, errorText } from "./i18n.js";
 import "./component-editor.js";
 import "./yaml-dialog.js";
@@ -126,8 +130,7 @@ const esc = (value) =>
         char
       ],
   );
-const icon = (name) =>
-  `<svg viewBox="0 0 24 24" aria-hidden="true" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${name === "menu" ? '<path d="M4 6h16M4 12h16M4 18h16"/>' : '<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/>'}</svg>`;
+const icon = materialIcon;
 // Settings the inspector leaves unset until asked: blank means imagespec's default.
 const optionalProperties = new Set([
   "valign",
@@ -162,32 +165,7 @@ const shapeTypes = [
   "triangle",
   "line",
 ];
-const toolIcon = (name) =>
-  `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${
-    {
-      duplicate:
-        '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V3H3v13h5"/>',
-      back: '<path d="m3 8 9-5 9 5-9 5-9-5Zm0 5 9 5 9-5M3 18l9 5 9-5"/>',
-      front: '<path d="m3 16 9 5 9-5-9-5-9 5Zm0-5 9-5 9 5M3 6l9-5 9 5"/>',
-      center: '<path d="M12 2v20M3 6h18M6 12h12M3 18h18"/>',
-      text: '<path d="M4 4h16M12 4v16M8 20h8"/>',
-      shape: '<rect x="4" y="4" width="16" height="16" rx="2"/>',
-      image:
-        '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="2"/><path d="m3 18 6-6 4 4 3-4 5 6"/>',
-      icon: '<path d="m12 3 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1Z"/>',
-      reload: '<path d="M20 7v5h-5M20 12a8 8 0 1 0-2 6"/>',
-      save: '<path d="M4 3h13l4 4v14H3V3h1M7 3v6h9V3M7 21v-8h10v8"/>',
-      preview:
-        '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
-      send: '<path d="m7 7 10 10-5 4V3l5 4L7 17"/>',
-      undo: '<path d="M8 4 3 9l5 5M3 9h10a7 7 0 0 1 0 14"/>',
-      redo: '<path d="m16 4 5 5-5 5M21 9H11a7 7 0 0 0 0 14"/>',
-      eyeoff:
-        '<path d="M3 3l18 18M10.6 6.2A10 10 0 0 1 12 5c6 0 10 7 10 7a17 17 0 0 1-3.2 4M6.1 7.1A17 17 0 0 0 2 12s4 7 10 7a9.7 9.7 0 0 0 4-.9"/>',
-      up: '<path d="m6 15 6-6 6 6"/>',
-      down: '<path d="m6 9 6 6 6-6"/>',
-    }[name]
-  }</svg>`;
+const toolIcon = materialIcon;
 let fontsLoading;
 // Started at import so the download overlaps the panel's other requests; a
 // failure is forgotten so that Retry downloads the fonts again.
@@ -208,7 +186,7 @@ function loadFonts() {
   return fontsLoading;
 }
 loadFonts().catch(() => {});
-const loadingStyle = `.loading{display:flex;flex-direction:column;align-items:center;gap:12px;padding:64px 24px;color:var(--secondary-text-color,#637083)}.loading p{margin:0}.loading progress{width:min(360px,80%);height:8px;accent-color:#166d75}.loading .error{color:#c33}@keyframes spin{to{transform:rotate(360deg)}}.spinning svg{animation:spin 1s linear infinite}`;
+const loadingStyle = `.loading{display:flex;flex-direction:column;align-items:center;gap:12px;padding:64px 24px;color:var(--secondary-text-color,#637083)}.loading p{margin:0}.loading progress{width:min(360px,80%);height:8px;accent-color:#166d75}.loading .error{color:#c33}@keyframes spin{to{transform:rotate(360deg)}}.spinning ha-icon{animation:spin 1s linear infinite}`;
 const style = `
 .mdi{font-family:LabelMDI;line-height:1;display:inline-block;font-weight:normal;font-style:normal}.icon-popover{margin-top:8px}.icon-popover .icon-picker{margin-top:8px}.icon-choice{display:flex;align-items:center;gap:8px;width:100%;text-align:left}.toolbar .icon-button{border:1px solid var(--divider-color,#cbd3de)}:host{display:block;color:var(--primary-text-color,#18232f);background:var(--primary-background-color,#f5f7fa);font:14px system-ui;height:100%;overflow:auto}*{box-sizing:border-box}header{display:flex;align-items:center;gap:14px;box-sizing:border-box;min-height:var(--header-height,56px);padding:0 12px 0 24px;background:var(--card-background-color,white);border-bottom:1px solid var(--divider-color,#e0e5eb)}h1{font-size:20px;font-weight:400;margin:0}header span{color:var(--secondary-text-color,#637083)}.version{display:inline-flex;align-items:center;font-size:12px;font-weight:600;color:var(--secondary-text-color,#64748b);background:var(--secondary-background-color,#f1f5f9);padding:2px 7px;border-radius:9999px;line-height:1.3;border:1px solid var(--divider-color,#dde3e8)}button,input,select,textarea{font:inherit;color:inherit;background:var(--card-background-color,white);border:1px solid var(--divider-color,#cbd3de);border-radius:6px;padding:8px}button{cursor:pointer}button:hover{border-color:#257d86}button:disabled{opacity:.45;cursor:default}button.primary{background:#166d75;color:white;border-color:#166d75}button:focus-visible,input:focus-visible,select:focus-visible,.el:focus-visible{outline:2px solid #167c88;outline-offset:2px}.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:14px 24px}.toolbar select{max-width:360px}
 .toolbar select,.toolbar button,.library select,.library button{box-sizing:border-box;min-height:38px}.toolbar select,.library select{appearance:none;-webkit-appearance:none;padding-right:30px;background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);background-position:calc(100% - 17px) 50%,calc(100% - 12px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat}.toolbar button.icon-button,.library button.icon-button{width:38px;height:38px}.template-start{display:grid;gap:8px;margin-bottom:12px}.template-hint{font-size:12px;line-height:1.4;color:var(--secondary-text-color,#637083);margin:0}.template-start[hidden]{display:none}.editor-bar{display:flex;align-items:center;gap:12px;padding:0 24px 12px}.editor-bar .spacer{flex:1}.icon-button{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;padding:7px;border:0;background:transparent}.icon-button[aria-expanded="true"]{background:var(--secondary-background-color,#e9eff2)}.icon-button.danger:hover{color:#c33;background:#c331}.context-menu{position:fixed;z-index:1000;width:220px;padding:6px;background:var(--card-background-color,white);box-shadow:0 5px 24px #0003;border:1px solid var(--divider-color,#ddd);border-radius:8px}.context-menu button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:0}.context-menu kbd{margin-left:auto}.delete-handle{position:absolute;right:0;top:-24px;width:24px;height:24px;display:flex;align-items:center;justify-content:center;padding:2px;border:1px solid #16838c;color:#b33;background:var(--card-background-color,white);z-index:5;border-radius:4px}.delete-handle svg{width:18px;height:18px}.context-menu kbd{float:right;font-size:11px;color:var(--secondary-text-color,#637083)}.template-controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:0 24px 14px}.template-controls input[type="number"]{width:75px}.tabs{display:flex;gap:4px;margin-left:auto}.tabs button[aria-pressed="true"]{background:#166d75;color:white}.tile-icon{position:absolute;left:4px;top:10px;width:36px;height:36px;display:flex;align-items:center;justify-content:center}.tile-copy{margin-left:48px;padding:6px 0}.tile-copy .value{font-size:18px}.el ha-icon{--mdc-icon-size:32px}.el.icon-content ha-icon{--mdc-icon-size:inherit}.state-rules{margin:0}.template-note{margin:0 24px 12px}.picker{display:flex;gap:5px;flex-wrap:wrap}.swatch{width:28px;height:28px;padding:0;background:var(--swatch);border:1px solid #888;border-radius:50%}.swatch[aria-pressed="true"]{outline:2px solid #16838c;outline-offset:2px}.align-button{width:32px;height:32px;padding:5px}.align-button[aria-pressed="true"]{background:#16838c22;border-color:#16838c}.align-button svg{width:20px;height:20px}.icon-picker{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;max-height:200px;overflow:auto}.icon-picker button{padding:6px}.icon-picker ha-icon{--mdc-icon-size:24px}.state-rules input{width:100%}.muted.help{display:none}h2{font-size:15px;margin:0 0 14px}p{line-height:1.5}.muted{color:var(--secondary-text-color,#637083);font-size:12px}.entity-preview{margin:12px 0 20px}.entity-state{display:flex;align-items:center;gap:10px;padding:10px;border:1px solid var(--divider-color,#ddd);border-radius:8px}.entity-state .state-copy{flex:1;min-width:0}.entity-state .state-name{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.entity-state .state-value{font-size:18px;margin-top:4px}.entity-state ha-state-icon{--mdc-icon-size:28px}.entity-state button{flex:none}ha-entity-picker{display:block;width:100%;margin-bottom:12px}.entity{display:block;text-align:left;width:100%;margin:5px 0}.entity small{display:block;color:var(--secondary-text-color,#637083);font-size:11px;overflow:hidden;text-overflow:ellipsis}.entity[draggable]{cursor:grab}.tools{display:flex;flex-wrap:wrap;gap:6px}.stage{position:relative;transform-origin:top left;background:white;color:black;box-shadow:0 8px 24px #15293825;outline:1px solid #c5ced9;touch-action:none}.el{position:absolute;overflow:visible;cursor:move;outline:1px dashed transparent;touch-action:none;user-select:none}.el{pointer-events:none}.el .content{pointer-events:none}.hit-area{position:absolute;pointer-events:auto}.el:hover .hit-area{outline:1px dashed #1c8990}.el.editing .content{pointer-events:auto}.el.editing .hit-area{pointer-events:none}.el.selected{outline:1px solid #16838c}.el .content{height:100%;overflow:hidden;font-family:LabelText, sans-serif}.el.editing .content{visibility:visible!important;-webkit-user-select:text;user-select:text;cursor:text;white-space:pre-wrap;outline:0}.el.rendered .content{visibility:hidden}.layer-preview{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;image-rendering:pixelated}.el.editing .layer-preview,.stage.exact-mode .layer-preview{display:none}.label{font-size:12px;height:18px;white-space:nowrap;overflow:hidden}.value{white-space:nowrap;overflow:hidden}.handle{position:absolute;right:-3px;bottom:-3px;width:6px;height:6px;background:#16838c;cursor:nwse-resize;z-index:3}.exact{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;image-rendering:pixelated}.stage.exact-mode .content{visibility:hidden}.stage.exact-mode .el{background:transparent!important}.stage.exact-mode .el.selected{z-index:100}.status{min-height:28px;padding:0 24px 12px;color:var(--secondary-text-color,#637083)}.status.toasting{visibility:hidden}.toast{position:fixed;left:12px;right:12px;bottom:calc(16px + var(--toast-offset,0px));margin-inline:auto;width:fit-content;max-width:640px;z-index:60;display:flex;align-items:center;gap:8px;box-sizing:border-box;padding:10px 14px;border:1px solid var(--divider-color,#cbd3de);border-radius:8px;background:var(--card-background-color,white);color:var(--primary-text-color,#18232f);box-shadow:0 5px 24px #0003}.toast.error{border-color:#c33}.toast button{flex:none;padding:0 8px;line-height:20px}.toast.busy::before{content:"";flex:none;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .8s linear infinite}.error{color:#c33}.props{display:grid;grid-template-columns:1fr 1fr;gap:9px}.props label{font-size:12px;display:flex;flex-direction:column;gap:5px}.props label.check{flex-direction:row;align-items:center}.props .wide{grid-column:1/-1}.props input,.props select,.props textarea{width:100%;min-width:0}.check{display:flex;align-items:center;gap:7px;margin:12px 0}.check input{width:auto}.layers{margin-top:16px;max-height:260px;overflow:auto}.layer-row{display:flex;align-items:center;gap:4px;margin:4px 0}.layer-row .layer{flex:1;min-width:0;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.layer-row .icon-button{flex:none;width:32px;height:32px;padding:4px}.layer-row .icon-button svg{width:18px;height:18px}.layer{display:block;width:100%;text-align:left;margin:4px 0}.layer.active{border-color:#16838c}.side-column{display:flex;flex-direction:column;gap:18px}.side-column .layers{margin-top:0}.footer-tools{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}@media(max-width:1050px){.props{grid-template-columns:repeat(4,1fr)}}.element-actions{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}.element-actions .icon-button{border:1px solid var(--divider-color,#cbd3de);border-radius:6px}@media(pointer:coarse),(max-width:650px){.toolbar select,.toolbar button,.library select,.library button{min-height:40px}.toolbar button.icon-button,.library button.icon-button,.element-actions .icon-button,.layer-row .icon-button{width:40px;height:40px;min-height:40px}.tabs button{min-height:40px}.toolbar [data-action="zoom-in"],.toolbar [data-action="zoom-out"]{min-width:40px}.layer-row .layer{min-height:40px}}@media(max-width:650px){.toolbar,.editor-bar,.template-controls{padding:12px}header{flex-wrap:wrap;padding:4px 12px}header span{display:none}.entities{height:150px}.props{grid-template-columns:1fr 1fr}}
@@ -2700,7 +2678,7 @@ export class BleEslDesigner extends HTMLElement {
     } else if (
       input.dataset.property &&
       this.element &&
-      ["text", "textarea", "number"].includes(input.type)
+      ["text", "textarea", "number", "range"].includes(input.type)
     ) {
       if (input.type === "number" && !input.validity.valid) return;
       if (this.typingProperty !== input) {
@@ -2749,8 +2727,10 @@ export class BleEslDesigner extends HTMLElement {
     else if (key === "dither") {
       if (input.value === "") delete this.element.dither;
       else this.element.dither = input.value === "none" ? false : input.value;
-    } else if (key === "rotation") this.element.rotation = Number(input.value);
-    else
+    } else if (key === "rotation") {
+      this.element.rotation = Number(input.value);
+      syncRotationInputs(this.shadowRoot, this.element.rotation);
+    } else
       this.element[key] =
         input.type === "checkbox"
           ? input.checked
@@ -2777,6 +2757,21 @@ export class BleEslDesigner extends HTMLElement {
     this.gestureFinish?.(false);
     const input = event.target,
       id = input.id;
+    if (id === "tag-orientation") {
+      try {
+        const result = await this.api("orientation", {
+          entry_id: this.tag.entry_id,
+          rotation: Number(input.value),
+        });
+        Object.assign(this.tag, result);
+        this.render();
+        this.fitPreview();
+        this.queuePreview();
+      } catch (error) {
+        this.report(error);
+      }
+      return;
+    }
     if (id === "template-type") {
       this.loadTemplate(input.value);
       return;
@@ -2891,7 +2886,7 @@ export class BleEslDesigner extends HTMLElement {
       return;
     }
     if (input.dataset.property && this.element) {
-      if (["text", "textarea", "number"].includes(input.type)) {
+      if (["text", "textarea", "number", "range"].includes(input.type)) {
         if (["x", "y", "width", "height"].includes(input.dataset.property)) {
           // Judged before the edit: an off-label imported frame stays put.
           const onFrame = this.typedOnLabel ?? true;
@@ -2903,7 +2898,7 @@ export class BleEslDesigner extends HTMLElement {
             );
           else clampBox(this.element, this.tag, onFrame);
           this.edited();
-        } else if (input.type === "number") {
+        } else if (["number", "range"].includes(input.type)) {
           // Show the value the element kept: it may have been clamped to the
           // allowed range, or refused as out of range.
           const key = input.dataset.property,

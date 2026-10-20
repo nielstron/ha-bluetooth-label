@@ -19,10 +19,10 @@ from homeassistant.helpers.storage import Store
 from homeassistant.loader import async_get_integration
 import voluptuous as vol
 
-from ..const import CONF_MODEL, DEFAULT_MODEL, DOMAIN
+from ..const import CONF_DISPLAY_ROTATION, CONF_MODEL, DEFAULT_MODEL, DOMAIN
 from ..device import resolve_preset
 from ..esl_ble.base import DevicePreset
-from ..renderer import encode_png, render_image
+from ..renderer import encode_png, oriented_preset, prepare_payload, render_image
 from ..services import build_write_job_from_data, cancel_pending_write, run_ble_write
 from ..yaml11 import repair_yaml11_keys
 from .design_templates import (
@@ -55,6 +55,7 @@ from .specs import (
 
 KEY = f"{DOMAIN}_designer"
 PANEL = "ble-esl-designer"
+FRONTEND_BUILD = "controls-2"
 MAX_STRUCTURED_PAYLOAD_BYTES = 5 * 1024 * 1024
 MAX_PREVIEW_VARIABLE_BYTES = 64 * 1024
 
@@ -131,7 +132,7 @@ class Designer:
                 "ble-esl-manager",
                 sidebar_title="ESL Manager",
                 sidebar_icon="mdi:label-multiple",
-                module_url=f"/ble_esl_designer/{integration.version}/manager.js",
+                module_url=f"/ble_esl_designer/{integration.version}-{FRONTEND_BUILD}/manager.js",
                 config={"version": str(integration.version)},
                 require_admin=True,
             )
@@ -184,12 +185,13 @@ class Designer:
     def preset(self, entry):
         """The preset a write would use now, refined by the last advertisement."""
         options = {**entry.data, **entry.options}
-        return resolve_preset(
+        preset = resolve_preset(
             self.hass,
             entry.runtime_data.protocol,
             entry.runtime_data.address,
             options.get(CONF_MODEL, DEFAULT_MODEL),
         ).preset
+        return oriented_preset(preset, options.get(CONF_DISPLAY_ROTATION, 0))
 
     async def render(self, preset, document, payload, snapshots):
         # Font/image allocation is expensive on small HA hosts. Keep all designer
@@ -286,6 +288,14 @@ class Designer:
                 for name in missing_template_parameters(self.hass, element["spec"])
             }
         )
+        # Free-angle groups become native imagespec data images in exported YAML.
+        # The attached source still re-evaluates every binding at execution time.
+        portable = await self.hass.async_add_executor_job(
+            prepare_payload, self.hass, preset, payload
+        )
+        if portable != payload:
+            payload = portable
+            automation_payload = portable
         result = export_yaml(
             payload,
             document["background"],
@@ -620,6 +630,11 @@ class Designer:
             preset = self.preset(entry)
             if (preset.width, preset.height) != image.size:
                 raise HomeAssistantError("The tag's display size changed; reload the designer")
+            orientation = entry.options.get(CONF_DISPLAY_ROTATION, 0)
+            if orientation:
+                image = await self.hass.async_add_executor_job(
+                    lambda: image.rotate(-orientation, expand=True)
+                )
             service_data = {"payload": payload, "background": document["background"]}
             job = await build_write_job_from_data(self.hass, entry, service_data, image=image)
             # Explicit sends also restore a tag that was reset externally.
@@ -637,6 +652,7 @@ class Designer:
                 "list",
                 "specs",
                 "save",
+                "orientation",
                 "preview",
                 "export",
                 "automation",
@@ -658,6 +674,7 @@ class Designer:
             )
         ),
         vol.Optional("entry_id"): str,
+        vol.Optional("rotation"): vol.In((0, 90, 180, 270)),
         vol.Optional("document"): dict,
         vol.Optional("preview_variables"): dict,
         vol.Optional("automation_edit"): bool,
@@ -725,6 +742,14 @@ async def websocket_designer(hass, connection, msg):
         result = await designer.save_template(msg["key"], msg["template"])
     elif action == "preview_template":
         result = await designer.preview_template(msg["template"], msg["entity_id"])
+    elif action == "orientation":
+        entry = designer.entry(msg["entry_id"])
+        hass.config_entries.async_update_entry(
+            entry, options={**entry.options, CONF_DISPLAY_ROTATION: msg["rotation"]}
+        )
+        cancel_pending_write(entry.runtime_data)
+        preset = designer.preset(entry)
+        result = {"rotation": msg["rotation"], "width": preset.width, "height": preset.height}
     elif action == "list":
         result = [
             {
@@ -734,6 +759,7 @@ async def websocket_designer(hass, connection, msg):
                 "width": (preset := designer.preset(entry)).width,
                 "height": preset.height,
                 "colors": preset.colors,
+                "rotation": entry.options.get(CONF_DISPLAY_ROTATION, 0),
                 "writable": getattr(entry.runtime_data.protocol, "writable", True),
                 "document": designer.documents.get(entry.entry_id),
             }
@@ -818,6 +844,11 @@ async def async_setup_designer(hass):
     await hass.http.async_register_static_paths(
         [
             # Versioned URL so an update never serves stale cached modules.
+            StaticPathConfig(
+                f"/ble_esl_designer/{integration.version}-{FRONTEND_BUILD}",
+                str(Path(__file__).parent / "frontend"),
+                False,
+            ),
             StaticPathConfig(
                 f"/ble_esl_designer/{integration.version}",
                 str(Path(__file__).parent / "frontend"),

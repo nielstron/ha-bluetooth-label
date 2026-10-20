@@ -1957,7 +1957,7 @@ test("new automation uses the unsaved design and current ESL with no triggers", 
   expect(config.alias).toBe("Room update");
   expect(config.triggers).toEqual([]);
   expect(config.conditions).toEqual([]);
-  expect(config.actions[0].action).toBe("ble_esl.write");
+  expect(config.actions[0].action).toBe("ble_esl.write_guarded");
   expect(config.actions[0].target).toEqual({ device_id: "demo-device-0" });
   expect(config.actions[0].data.payload).toHaveLength(1);
   expect(config.actions[0].data.payload[0].value).toBe("Your text");

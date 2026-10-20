@@ -385,7 +385,7 @@ async def test_the_live_export_keeps_templates_and_renders_to_the_same_payload(h
     # What the automation will render is what the designer shows now.
     assert resolve_templates(hass, live, set()) == now
     service = yaml.safe_load(result["live_service"])
-    assert service["action"] == "ble_esl.write"
+    assert service["action"] == "ble_esl.write_guarded"
     assert service["data"]["payload"] == live
 
 
