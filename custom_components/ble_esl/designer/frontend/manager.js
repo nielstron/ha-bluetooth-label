@@ -175,11 +175,35 @@ class EslManager extends HTMLElement {
       );
     }
     if (this.hass && !this.started) this.refresh();
+    this.onDesignSaved = (event) => {
+      // Serialize saves so a slower export cannot put older triggers back.
+      this.designSync = (this.designSync || Promise.resolve())
+        .then(() => this.syncSavedDesign(event.detail))
+        .catch((error) =>
+          this.message(
+            errorText(
+              this.hass,
+              "Could not update automatic display refresh",
+              error,
+            ),
+          ),
+        );
+    };
+    this.addEventListener("design-saved", this.onDesignSaved);
+    this.onHistory = () => this.restoreLocation();
+    window.addEventListener("popstate", this.onHistory);
+    this.onTagChanged = (event) => {
+      if (this.view === "editor") this.rememberTag(event.detail.entry_id);
+    };
+    this.addEventListener("tag-changed", this.onTagChanged);
     this.clockTimer = setInterval(() => {
       if (this.view === "dashboard") this.renderCards();
     }, 60000);
   }
   disconnectedCallback() {
+    this.removeEventListener("design-saved", this.onDesignSaved);
+    window.removeEventListener("popstate", this.onHistory);
+    this.removeEventListener("tag-changed", this.onTagChanged);
     clearInterval(this.clockTimer);
     clearTimeout(this.messageTimer);
     this.toastObserver?.disconnect();
@@ -232,6 +256,7 @@ class EslManager extends HTMLElement {
     try {
       this.tags = await this.api("list");
       this.renderCards();
+      this.restoreLocation();
       await this.loadAutomations();
     } catch (error) {
       this.message(errorText(this.hass, "Could not load ESL data", error));
@@ -576,6 +601,29 @@ class EslManager extends HTMLElement {
         )
         ?.focus();
   }
+  async syncSavedDesign({ entry_id, document }) {
+    const tag = this.tags.find((t) => t.entry_id === entry_id);
+    if (!tag) return;
+    tag.document = structuredClone(document);
+    this.automationVersions.set(
+      entry_id,
+      (this.automationVersions.get(entry_id) || 0) + 1,
+    );
+  }
+  rememberTag(entryId) {
+    const url = new URL(window.location.href);
+    if ((url.searchParams.get("tag") || null) === (entryId || null)) return;
+    if (entryId) url.searchParams.set("tag", entryId);
+    else url.searchParams.delete("tag");
+    window.history.pushState({ ...window.history.state }, "", url);
+  }
+  restoreLocation() {
+    const entryId = new URL(window.location.href).searchParams.get("tag");
+    const tag = this.tags.find((t) => t.entry_id === entryId);
+    if (tag) this.openEditor(tag);
+    else if (!entryId && this.view === "editor")
+      this.shadowRoot.querySelector('[data-action="dashboard"]').click();
+  }
   openEditor(tag) {
     if (
       this.automationEditSession &&
@@ -591,6 +639,7 @@ class EslManager extends HTMLElement {
       return false;
     }
     this.message();
+    this.rememberTag(tag.entry_id);
     this.view = "editor";
     this.shadowRoot.querySelector("#dashboard").hidden = true;
     this.shadowRoot.querySelector("#editor").hidden = false;
@@ -845,6 +894,14 @@ class EslManager extends HTMLElement {
           ),
         );
       const data = selectedAction.data || selectedAction.service_data;
+      if (data?.use_saved_design) {
+        const savedTag = (await this.api("list")).find(
+          (t) => t.entry_id === entryId,
+        );
+        this.clearAutomationEdit(session);
+        this.openEditor(savedTag);
+        return;
+      }
       if (!data || !Array.isArray(data.payload))
         throw new Error(
           t(this.hass, "This write action has no editable payload list."),
@@ -1271,6 +1328,7 @@ class EslManager extends HTMLElement {
         )
       )
         return;
+      this.rememberTag(null);
       this.view = "dashboard";
       this.automationEditRun = (this.automationEditRun || 0) + 1;
       this.automationSaveRun = (this.automationSaveRun || 0) + 1;

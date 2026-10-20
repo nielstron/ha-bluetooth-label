@@ -33,8 +33,9 @@ from .design_templates import (
     pick_id,
     template_text,
 )
-from .export import automation_draft, export_yaml, plain
+from .export import automation_draft, export_yaml, plain, saved_design_export
 from .importer import convert, different_pixels, elements_from, parse, payloads
+from .inputs import DesignInputs, input_trigger
 from .layout import (
     compile_payload,
     live_payload,
@@ -55,7 +56,7 @@ from .specs import (
 
 KEY = f"{DOMAIN}_designer"
 PANEL = "ble-esl-designer"
-FRONTEND_BUILD = "controls-2"
+FRONTEND_BUILD = "controls-3"
 MAX_STRUCTURED_PAYLOAD_BYTES = 5 * 1024 * 1024
 MAX_PREVIEW_VARIABLE_BYTES = 64 * 1024
 
@@ -102,6 +103,7 @@ class Designer:
         self.automation_links = AutomationLinks(hass)
         self.store = Store(hass, 1, f"{DOMAIN}.designer")
         self.documents = {}
+        self.inputs = DesignInputs(self)
         self.template_store = Store(hass, 1, f"{DOMAIN}.sensor_templates")
         self.templates = {}
         self.design_templates = {}
@@ -154,6 +156,7 @@ class Designer:
         document = validate(document, self.preset(entry))
         self.documents[entry.entry_id] = document
         await self.store.async_save(self.documents)
+        self.inputs.track(entry.entry_id)
         cancel_pending_write(entry.runtime_data)
         return document
 
@@ -317,34 +320,18 @@ class Designer:
 
     async def automation(self, entry, document, preview_variables=None, defaults=None):
         """Prepare a new automation from the current, possibly unsaved design."""
-        result = await self.export(entry, document, preview_variables)
+        result = saved_design_export(await self.export(entry, document, preview_variables))
         if not result["writable"]:
             raise HomeAssistantError("This ESL does not support writing")
         if not entry.runtime_data.device_id:
             raise HomeAssistantError("This ESL has no registered device")
         if defaults is None or "triggers" not in defaults:
-            validated = validate(document, self.preset(entry))
-            layers = snapshot_layers(
-                self.hass,
-                validated,
-                self.templates,
-                await self.forecasts(validated),
-                preview_variables=preview_variables,
-            )
-            entities = sorted(
-                {
-                    entity
-                    for element, _ in layers
-                    for entity in [element.get("entity_id"), *element.get("_template_entities", [])]
-                    if entity and not entity.startswith("{{")
-                }
-            )
-            result["input_triggers"] = bool(entities)
+            result["input_triggers"] = True
             defaults = {
                 "mode": "queued",
                 "max": 2,
                 **(defaults or {}),
-                "triggers": [{"trigger": "state", "entity_id": entities}] if entities else [],
+                "triggers": [input_trigger(entry.entry_id)],
             }
         return {**result, "automation": automation_draft(result, entry.title, defaults)}
 
@@ -846,6 +833,11 @@ async def async_setup_designer(hass):
             # Versioned URL so an update never serves stale cached modules.
             StaticPathConfig(
                 f"/ble_esl_designer/{integration.version}-{FRONTEND_BUILD}",
+                str(Path(__file__).parent / "frontend"),
+                False,
+            ),
+            StaticPathConfig(
+                f"/ble_esl_designer/{integration.version}-controls-2",
                 str(Path(__file__).parent / "frontend"),
                 False,
             ),

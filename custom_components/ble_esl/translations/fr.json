@@ -27,6 +27,10 @@
         "design_variables": {
           "name": "Designer variables",
           "description": "Automation variables supplied to templates in the designer source."
+        },
+        "use_saved_design": {
+          "name": "Use saved design",
+          "description": "Use the target tag's current saved design and rendering rules."
         }
       }
     },
@@ -61,6 +65,10 @@
         "design_variables": {
           "name": "Designer variables",
           "description": "Automation variables supplied to templates in the designer source."
+        },
+        "use_saved_design": {
+          "name": "Use saved design",
+          "description": "Use the target tag's current saved design and rendering rules."
         }
       }
     }

@@ -101,8 +101,9 @@ def _color(value: Any) -> str:
 # keys from older automations) passes through untouched.
 WRITE_SERVICE_SCHEMA = vol.Schema(
     {
-        vol.Required("payload"): list,
+        vol.Optional("payload"): list,
         vol.Optional("design"): vol.Any(dict, str),
+        vol.Optional("use_saved_design"): cv.boolean,
         vol.Optional("design_variables"): dict,
         vol.Optional("rotate"): vol.All(vol.Coerce(int), vol.In((0, 90, 180, 270))),
         vol.Optional("background"): _color,
@@ -113,6 +114,16 @@ WRITE_SERVICE_SCHEMA = vol.Schema(
 WRITE_GUARDED_SERVICE_SCHEMA = WRITE_SERVICE_SCHEMA.extend(
     {vol.Optional("debounce_override_ms"): vol.All(vol.Coerce(int), vol.Range(min=0))}
 )
+
+
+def _require_write_source(data):
+    if "payload" not in data and not data.get("use_saved_design"):
+        raise vol.Invalid("required key not provided", path=["payload"])
+    return data
+
+
+WRITE_SERVICE_SCHEMA = vol.All(WRITE_SERVICE_SCHEMA, _require_write_source)
+WRITE_GUARDED_SERVICE_SCHEMA = vol.All(WRITE_GUARDED_SERVICE_SCHEMA, _require_write_source)
 
 
 @callback
@@ -342,7 +353,7 @@ async def build_write_job_from_data(
     data.preset = preset
     data.parser.set_preset(preset)
 
-    if image is None and "design" in service_data:
+    if image is None and ("design" in service_data or service_data.get("use_saved_design")):
         # Import lazily: the optional designer also uses this write pipeline.
         from .designer import KEY
         from .designer.automation_source import decode_design
@@ -350,7 +361,9 @@ async def build_write_job_from_data(
 
         designer = hass.data[KEY]
         document = validate(
-            decode_design(service_data["design"]),
+            designer.documents[entry.entry_id]
+            if service_data.get("use_saved_design")
+            else decode_design(service_data["design"]),
             oriented_preset(preset, options.get(CONF_DISPLAY_ROTATION, 0)),
         )
         payload = compile_payload(
@@ -363,7 +376,11 @@ async def build_write_job_from_data(
         service_data = {**service_data, "payload": payload, "background": document["background"]}
 
     if image is None:
-        render_lock = designer.render_lock if "design" in service_data else nullcontext()
+        render_lock = (
+            designer.render_lock
+            if "design" in service_data or service_data.get("use_saved_design")
+            else nullcontext()
+        )
         async with render_lock:
             image = await hass.async_add_executor_job(
                 partial(

@@ -1153,10 +1153,17 @@ async def test_automation_draft_uses_current_design_and_registered_device(hass, 
     designer = hass.data[KEY]
     result = await designer.automation(wolink_entry, document())
     config = result["automation"]
-    assert config["triggers"] == [{"trigger": "state", "entity_id": ["sensor.room_temperature"]}]
+    assert config["triggers"] == [
+        {
+            "trigger": "event",
+            "event_type": "ble_esl_inputs_changed",
+            "event_data": {"entry_id": wolink_entry.entry_id},
+            "id": "ble_esl_inputs",
+        }
+    ]
     assert config["conditions"] == []
     assert config["actions"][0]["target"] == {"device_id": wolink_entry.runtime_data.device_id}
-    assert config["actions"][0]["data"]["payload"] == yaml.safe_load(result["payload"])
+    assert config["actions"][0]["data"] == {"use_saved_design": True}
     assert config["actions"][0]["action"] == "ble_esl.write_guarded"
     assert config["alias"] == wolink_entry.title
     assert "id" not in config

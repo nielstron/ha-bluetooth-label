@@ -1,3 +1,8 @@
+import {
+  sharedProperties,
+  setSharedProperty,
+  beginMarquee,
+} from "./editor/group-selection.js";
 import { materialIcon } from "./editor/material-icons.js";
 import {
   renderElementRotation,
@@ -296,6 +301,33 @@ export class BleEslDesigner extends HTMLElement {
   }
   set selected(value) {
     this.session.selected = value;
+    this._selection = new Set(value ? [value] : []);
+  }
+  get selectedIds() {
+    const ids = this._selection?.has(this.selected)
+      ? this._selection
+      : new Set(this.selected ? [this.selected] : []);
+    return new Set(
+      this.document.elements.filter((e) => ids.has(e.id)).map((e) => e.id),
+    );
+  }
+  selectIds(ids, primary = this.selected) {
+    this._selection = new Set(ids);
+    this.session.selected = this._selection.has(primary)
+      ? primary
+      : [...this._selection].at(-1) || null;
+  }
+  toggleSelection(id) {
+    const ids = this.selectedIds;
+    if (ids.has(id)) ids.delete(id);
+    else ids.add(id);
+    this.selectIds(ids, id);
+  }
+  get selectedElements() {
+    return this.document.elements.filter((e) => this.selectedIds.has(e.id));
+  }
+  beginMarquee(event) {
+    beginMarquee(this, event);
   }
   get undoStack() {
     return this.session.undoStack;
@@ -775,8 +807,21 @@ export class BleEslDesigner extends HTMLElement {
     // Every re-render of the error (e.g. the click handler's) keeps the focus.
     this.shadowRoot.querySelector(".loading button")?.focus();
   }
-  api(action, extra = {}) {
-    return this.hass.callWS({ type: "ble_esl/designer", action, ...extra });
+  async api(action, extra = {}) {
+    const result = await this.hass.callWS({
+      type: "ble_esl/designer",
+      action,
+      ...extra,
+    });
+    if (action === "save")
+      this.dispatchEvent(
+        new CustomEvent("design-saved", {
+          detail: { entry_id: extra.entry_id, document: clone(result) },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    return result;
   }
   load(tag) {
     if (
@@ -1259,10 +1304,11 @@ export class BleEslDesigner extends HTMLElement {
           },
           libraryContent: `${this.templateParts()}<div ${this.mode === "template" ? "hidden" : ""}><ha-entity-picker id="entity-picker"></ha-entity-picker><div class="entity-preview"></div></div><h2>${t(this.hass, "Components")}</h2><p class="hint">${t(this.hass, "Use the icon buttons to add text, a shape, an icon or an image. Add component offers sensors, bars, gauges and more.")}</p><button data-action="add-component">${t(this.hass, "＋ Add component")}</button><div class="tools"><button class="icon-button" data-add="text" aria-label="${t(this.hass, "Add text")}" title="${t(this.hass, "Text")}">${toolIcon("text")}</button><button class="icon-button" data-add="rectangle" aria-label="${t(this.hass, "Add shape")}" title="${t(this.hass, "Shape")}">${toolIcon("shape")}</button><button class="icon-button" data-add="icon" aria-label="${t(this.hass, "Add icon")}" title="${t(this.hass, "Icon")}">${toolIcon("icon")}</button><button class="icon-button" data-add="image" aria-label="${t(this.hass, "Add image")}" title="${t(this.hass, "Image")}">${toolIcon("image")}</button></div>${this.specPalette()}<div class="footer-tools"><button data-action="yaml" ${this.mode === "template" ? "hidden" : ""}>${t(this.hass, "Payload YAML")}</button><button data-action="import-yaml" ${this.mode === "template" ? "hidden" : ""}>${t(this.hass, "Import YAML")}</button><button data-action="export">${t(this.hass, "Export JSON")}</button><button data-action="import" ${this.mode === "template" ? "hidden" : ""}>${t(this.hass, "Import JSON")}</button><input id="file" type="file" accept="application/json" hidden></div>`,
           elementActions: element ? this.elementActions() : "",
-          propertyContent: `${element && element.type !== "imagespec" ? `<button class="wide" data-action="configure-component">${t(this.hass, "Configure")}</button>${this.mode === "template" ? "" : `<button class="wide" data-action="convert" title="${t(this.hass, "Turn this into plain imagespec elements to edit field by field; a sensor's value becomes a template")}">${t(this.hass, "Convert to elements")}</button>`}` : ""}${this.properties(element)}`,
+          propertyContent: `${element && this.selectedElements.length === 1 && element.type !== "imagespec" ? `<button class="wide" data-action="configure-component">${t(this.hass, "Configure")}</button>${this.mode === "template" ? "" : `<button class="wide" data-action="convert" title="${t(this.hass, "Turn this into plain imagespec elements to edit field by field; a sensor's value becomes a template")}">${t(this.hass, "Convert to elements")}</button>`}` : ""}${this.properties(element)}`,
           layerRows: renderLayerRows({
             elements: this.document.elements,
             selected: this.selected,
+            selectedIds: this.selectedIds,
             layerLabel: (item) => this.layerLabel(item),
             t: (key, values) => t(this.hass, key, values),
             esc,
@@ -1359,8 +1405,20 @@ export class BleEslDesigner extends HTMLElement {
       this.shadowRoot.append(dialog);
       dialog.open(
         this.yamlExport,
-        () => this.shadowRoot.querySelector('[data-action="yaml"]')?.focus(),
+        () => {
+          this.render();
+          this.shadowRoot.querySelector('[data-action="yaml"]')?.focus();
+        },
         this.hass,
+        async (document) => {
+          const result = await this.api("save", {
+            entry_id: this.tag.entry_id,
+            document,
+          });
+          this.adoptDocument(result);
+          this.dirty = false;
+          return result;
+        },
       );
       this.yamlExport = null;
     }
@@ -1673,6 +1731,8 @@ export class BleEslDesigner extends HTMLElement {
     });
   }
   properties(element) {
+    if (this.selectedElements.length > 1)
+      return sharedProperties(this, (message) => t(this.hass, message), esc);
     if (!element)
       return `<p class="muted wide">${t(this.hass, "Click a block to move, resize, or bind it to an entity.")}</p>${this.mode === "display" && !this._automationSaveMode ? `<h3 class="wide group-title">${t(this.hass, "Display")}</h3>${this.colorPicker("display-background", this.document.background, t(this.hass, "Background"))}` : ""}`;
     if (element.type === "imagespec") {
@@ -1957,7 +2017,7 @@ export class BleEslDesigner extends HTMLElement {
       return renderLayerMarkup({
         element,
         index,
-        selected: element.id === this.selected,
+        selected: this.selectedIds.has(element.id),
         rendered,
         ghost: Boolean(ghost),
         label,
@@ -1992,21 +2052,26 @@ export class BleEslDesigner extends HTMLElement {
     });
   }
   selectionMarkup() {
-    const element = this.element,
-      coarsePointer = window.matchMedia("(pointer: coarse)").matches;
-    return renderSelectionMarkup({
-      element,
-      geometry: calculateSelectionOverlayGeometry({
-        element,
-        visible: element ? this.visibleBounds(element) : undefined,
-        zoom: this.zoom,
-        coarsePointer,
-      }),
-      translate: (key, values) => t(this.hass, key, values),
-      escape: esc,
-      deleteIcon: icon("delete"),
-    });
+    const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+    return this.selectedElements
+      .map((element) =>
+        renderSelectionMarkup({
+          element,
+          multiple: this.selectedElements.length > 1,
+          geometry: calculateSelectionOverlayGeometry({
+            element,
+            visible: this.visibleBounds(element),
+            zoom: this.zoom,
+            coarsePointer,
+          }),
+          translate: (key, values) => t(this.hass, key, values),
+          escape: esc,
+          deleteIcon: icon("delete"),
+        }),
+      )
+      .join("");
   }
+
   alignmentGuidesMarkup() {
     return renderAlignmentGuides(this.snapGuides);
   }
@@ -2023,40 +2088,43 @@ export class BleEslDesigner extends HTMLElement {
     });
   }
   updateSelectionOverlay() {
-    const overlay = this.shadowRoot.querySelector(".selection-box"),
-      element = this.element;
-    if (!overlay || !element) return;
-    const geometry = calculateSelectionOverlayGeometry({
-      element,
-      visible: this.visibleBounds(element),
-      zoom: this.zoom,
-      coarsePointer: window.matchMedia("(pointer: coarse)").matches,
-    });
-    overlay.style.left = `${geometry.left}px`;
-    overlay.style.top = `${geometry.top}px`;
-    overlay.style.width = `${geometry.width}px`;
-    overlay.style.height = `${geometry.height}px`;
-    overlay.style.outlineWidth = `${1.5 / this.zoom}px`;
-    for (const handle of overlay.querySelectorAll(".handle")) {
-      const corner = handle.dataset.corner;
-      handle.style.left = `${corner.endsWith("w") ? -geometry.handleSize : geometry.width}px`;
-      handle.style.top = `${corner.startsWith("n") ? -geometry.handleSize : geometry.height}px`;
-      handle.style.width = `${geometry.handleSize}px`;
-      handle.style.height = `${geometry.handleSize}px`;
+    for (const overlay of this.shadowRoot.querySelectorAll(".selection-box")) {
+      const element = this.document.elements.find(
+        (e) => e.id === overlay.dataset.id,
+      );
+      if (!element) continue;
+      const geometry = calculateSelectionOverlayGeometry({
+        element,
+        visible: this.visibleBounds(element),
+        zoom: this.zoom,
+        coarsePointer: window.matchMedia("(pointer: coarse)").matches,
+      });
+      overlay.style.left = `${geometry.left}px`;
+      overlay.style.top = `${geometry.top}px`;
+      overlay.style.width = `${geometry.width}px`;
+      overlay.style.height = `${geometry.height}px`;
+      overlay.style.outlineWidth = `${1.5 / this.zoom}px`;
+      for (const handle of overlay.querySelectorAll(".handle")) {
+        const corner = handle.dataset.corner;
+        handle.style.left = `${corner.endsWith("w") ? -geometry.handleSize : geometry.width}px`;
+        handle.style.top = `${corner.startsWith("n") ? -geometry.handleSize : geometry.height}px`;
+        handle.style.width = `${geometry.handleSize}px`;
+        handle.style.height = `${geometry.handleSize}px`;
+      }
+      const moveTarget = overlay.querySelector(".move-handle");
+      if (moveTarget) {
+        moveTarget.style.left = `${geometry.width / 2 - geometry.handleSize / 2}px`;
+        moveTarget.style.top = `${geometry.height / 2 - geometry.handleSize / 2}px`;
+        moveTarget.style.width = `${geometry.handleSize}px`;
+        moveTarget.style.height = `${geometry.handleSize}px`;
+        moveTarget.style.display =
+          Math.max(geometry.width, geometry.height) * this.zoom < 36
+            ? "grid"
+            : "none";
+      }
+      const trash = overlay.querySelector(".delete-handle");
+      if (trash) trash.style.transform = `scale(${1 / this.zoom})`;
     }
-    const moveTarget = overlay.querySelector(".move-handle");
-    if (moveTarget) {
-      moveTarget.style.left = `${geometry.width / 2 - geometry.handleSize / 2}px`;
-      moveTarget.style.top = `${geometry.height / 2 - geometry.handleSize / 2}px`;
-      moveTarget.style.width = `${geometry.handleSize}px`;
-      moveTarget.style.height = `${geometry.handleSize}px`;
-      moveTarget.style.display =
-        Math.max(geometry.width, geometry.height) * this.zoom < 36
-          ? "grid"
-          : "none";
-    }
-    const trash = overlay.querySelector(".delete-handle");
-    if (trash) trash.style.transform = `scale(${1 / this.zoom})`;
   }
   // Content bounds come from the last render and are relative to the element.
   // Moving the element keeps them. Resizing it grows or shrinks them with the
@@ -2252,7 +2320,7 @@ export class BleEslDesigner extends HTMLElement {
       if (button.dataset.pick === "display-background")
         this.document.background = button.dataset.value;
       else if (this.element)
-        this.element[button.dataset.pick] = button.dataset.value;
+        setSharedProperty(this, button.dataset.pick, button.dataset.value);
       this.edited();
       return;
     }
@@ -2307,8 +2375,21 @@ export class BleEslDesigner extends HTMLElement {
       this.add(button.dataset.add);
       return;
     }
+    if (
+      button.dataset.select &&
+      (event.shiftKey || event.ctrlKey || event.metaKey)
+    ) {
+      this.toggleSelection(button.dataset.select);
+      this.render();
+      this.focusElement();
+      return;
+    }
     if (handleLayerListClick(this, button)) return;
     const action = button.dataset.action;
+    if (action === "tag-orientation") {
+      await this.setTagOrientation(Number(button.dataset.rotation));
+      return;
+    }
     if (action === "show-hidden-icons") {
       this.showHiddenIcons = !this.showHiddenIcons;
       button.setAttribute("aria-pressed", String(this.showHiddenIcons));
@@ -2551,6 +2632,37 @@ export class BleEslDesigner extends HTMLElement {
     if (!["duplicate", "delete", "back", "front", "center"].includes(action))
       return;
     this.checkpoint();
+    if (this.selectedElements.length > 1) {
+      const selected = this.selectedElements,
+        remaining = this.document.elements.filter(
+          (e) => !this.selectedIds.has(e.id),
+        );
+      if (action === "duplicate") {
+        const copies = selected.map((e) => ({
+          ...clone(e),
+          id: createId(),
+          x: e.x + 8,
+          y: e.y + 8,
+        }));
+        this.document.elements.push(...copies);
+        this.selectIds(copies.map((e) => e.id));
+      } else if (action === "delete") {
+        this.document.elements = remaining;
+        this.selected = null;
+      } else if (action === "back")
+        this.document.elements = [...selected, ...remaining];
+      else if (action === "front")
+        this.document.elements = [...remaining, ...selected];
+      else if (action === "center") {
+        const left = Math.min(...selected.map((e) => e.x)),
+          right = Math.max(...selected.map((e) => e.x + e.width));
+        const dx = Math.round((this.tag.width - (right - left)) / 2) - left;
+        selected.forEach((e) => (e.x += dx));
+      }
+      this.edited();
+      this.focusElement();
+      return;
+    }
     const elements = this.document.elements,
       index = elements.indexOf(element);
     if (action === "duplicate") {
@@ -2588,7 +2700,13 @@ export class BleEslDesigner extends HTMLElement {
     const node = event.target.closest("[data-id], [data-select]");
     if (!node || this.busy) return;
     event.preventDefault();
-    this.selected = node.dataset.id || node.dataset.select;
+    if (event.ctrlKey) {
+      event.preventDefault();
+      return;
+    }
+    const id = node.dataset.id || node.dataset.select;
+    if (this.selectedIds.has(id)) this.selectIds(this.selectedIds, id);
+    else this.selected = id;
     this.render();
     const menu = document.createElement("div");
     menu.className = "context-menu";
@@ -2701,6 +2819,18 @@ export class BleEslDesigner extends HTMLElement {
   }
   updateProperty(input) {
     const key = input.dataset.property;
+    if (this.selectedElements.length > 1) {
+      if (input.value === "" && ["number", "range"].includes(input.type))
+        return;
+      const value = ["number", "range"].includes(input.type)
+        ? Number(input.value)
+        : input.type === "checkbox"
+          ? input.checked
+          : input.value;
+      setSharedProperty(this, key, value);
+      if (key === "rotation") syncRotationInputs(this.shadowRoot, value);
+      return;
+    }
     if (key === "weather_field" && input.value === "condition")
       delete this.element.decimals;
     if (key === "type") {
@@ -2752,26 +2882,25 @@ export class BleEslDesigner extends HTMLElement {
     // Typed geometry is kept to the label when the field is committed.
     clampBox(this.element, this.tag, false);
   }
+  async setTagOrientation(rotation) {
+    try {
+      const result = await this.api("orientation", {
+        entry_id: this.tag.entry_id,
+        rotation,
+      });
+      Object.assign(this.tag, result);
+      this.render();
+      this.fitPreview();
+      this.queuePreview();
+    } catch (error) {
+      this.report(error);
+    }
+  }
   async change(event) {
     if (this.busy) return;
     this.gestureFinish?.(false);
     const input = event.target,
       id = input.id;
-    if (id === "tag-orientation") {
-      try {
-        const result = await this.api("orientation", {
-          entry_id: this.tag.entry_id,
-          rotation: Number(input.value),
-        });
-        Object.assign(this.tag, result);
-        this.render();
-        this.fitPreview();
-        this.queuePreview();
-      } catch (error) {
-        this.report(error);
-      }
-      return;
-    }
     if (id === "template-type") {
       this.loadTemplate(input.value);
       return;
@@ -2802,6 +2931,13 @@ export class BleEslDesigner extends HTMLElement {
       }
       this.gestureFinish?.(false);
       this.load(this.tags.find((tag) => tag.entry_id === input.value));
+      this.dispatchEvent(
+        new CustomEvent("tag-changed", {
+          detail: { entry_id: input.value },
+          bubbles: true,
+          composed: true,
+        }),
+      );
       return;
     }
     if (id === "zoom") {
@@ -2886,6 +3022,13 @@ export class BleEslDesigner extends HTMLElement {
       return;
     }
     if (input.dataset.property && this.element) {
+      if (
+        this.selectedElements.length > 1 &&
+        ["text", "textarea", "number", "range"].includes(input.type)
+      ) {
+        this.updateProperty(input);
+        return;
+      }
       if (["text", "textarea", "number", "range"].includes(input.type)) {
         if (["x", "y", "width", "height"].includes(input.dataset.property)) {
           // Judged before the edit: an off-label imported frame stays put.

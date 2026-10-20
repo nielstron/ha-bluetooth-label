@@ -148,12 +148,10 @@ test("tag orientation changes the canvas without discarding the current design",
       });
     return route.continue();
   });
-  await page
-    .getByRole("combobox", { name: "Tag orientation", exact: true })
-    .selectOption("90");
+  await page.getByRole("button", { name: "Portrait", exact: true }).click();
   await expect(
-    page.getByRole("combobox", { name: "Tag orientation", exact: true }),
-  ).toHaveValue("90");
+    page.getByRole("button", { name: "Portrait", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
   expect(
     await page.evaluate(() => [
       window.panel.tag.width,
@@ -163,4 +161,18 @@ test("tag orientation changes the canvas without discarding the current design",
   expect(await page.evaluate(() => JSON.stringify(window.panel.document))).toBe(
     before,
   );
+});
+
+test("square tags have no portrait or landscape controls", async ({ page }) => {
+  await page.evaluate(() => {
+    window.panel.tag.width = 200;
+    window.panel.tag.height = 200;
+    window.panel.render();
+  });
+  await expect(
+    page.getByRole("button", { name: "Portrait", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Landscape", exact: true }),
+  ).toHaveCount(0);
 });

@@ -139,6 +139,17 @@ def export_yaml(
     return result
 
 
+def saved_design_export(exported):
+    """Reference the persistent tag document; keep standalone exports explicit."""
+    action = yaml.safe_load(exported.get("live_service", exported["service"]))
+    variables = action["data"].get("design_variables")
+    action["data"] = {"use_saved_design": True}
+    if variables:
+        action["data"]["design_variables"] = variables
+    service = yaml.dump(action, Dumper=_PlainDumper, sort_keys=False, allow_unicode=True)
+    return {**exported, "service": service, "live_service": service}
+
+
 def automation_draft(exported, name, defaults=None):
     """Prefill a new automation, using templates when available.
 

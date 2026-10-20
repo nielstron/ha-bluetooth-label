@@ -100,16 +100,20 @@ async def test_automation_keeps_original_component_configuration(hass, wolink_en
     }
     result = await hass.data[KEY].automation(wolink_entry, source)
     action = result["automation"]["actions"][0]
-    assert "design" in action["data"], (
-        "Automation must carry the source design, not just today's pixels"
-    )
+    assert action["data"] == {"use_saved_design": True}
+    assert "field_templates" in result["design_source"]
 
 
 async def test_new_automation_triggers_on_its_input_states(hass, wolink_entry):
     hass.states.async_set("binary_sensor.laundry", "on")
     result = await hass.data[KEY].automation(wolink_entry, icon_document(rotation=0))
     assert result["automation"]["triggers"] == [
-        {"trigger": "state", "entity_id": ["binary_sensor.laundry"]}
+        {
+            "trigger": "event",
+            "event_type": "ble_esl_inputs_changed",
+            "event_data": {"entry_id": wolink_entry.entry_id},
+            "id": "ble_esl_inputs",
+        }
     ]
 
 
@@ -126,8 +130,10 @@ async def test_automation_write_resolves_current_rules_after_ha_renders_action_d
     source["elements"][0]["field_templates"] = {
         "color": "{{ 'red' if value == 'on' else 'black' }}"
     }
-    exported = await hass.data[KEY].automation(wolink_entry, source)
-    action = exported["automation"]["actions"][0]
+    exported = await hass.data[KEY].export(wolink_entry, source)
+    import yaml
+
+    action = yaml.safe_load(exported["service"])
     data = {**action["data"], "design": Template(action["data"]["design"], hass).async_render()}
     assert (
         decode_design(data["design"])["elements"][0]["field_templates"]
@@ -143,6 +149,7 @@ async def test_input_state_change_runs_the_exported_automation(hass, wolink_entr
     from homeassistant.setup import async_setup_component
 
     hass.states.async_set("binary_sensor.laundry", "off")
+    await hass.data[KEY].save(wolink_entry, icon_document())
     result = await hass.data[KEY].automation(wolink_entry, icon_document())
     config = {"id": "live-tag", **result["automation"]}
     assert await async_setup_component(hass, "automation", {"automation": [config]})
@@ -178,7 +185,9 @@ async def test_automation_passes_script_variables_to_native_templates(hass, woli
         wolink_entry, source, preview_variables={"message": "preview only"}
     )
     data = result["automation"]["actions"][0]["data"]
-    assert "preview only" not in data["design"]
+    assert data["use_saved_design"] is True
+    assert "design" not in data
+    await hass.data[KEY].save(wolink_entry, source)
     assert data["design_variables"] == {"message": "{{ message }}"}
     data["design_variables"] = {
         key: Template(value, hass).async_render({"message": "Actual run"})
@@ -265,3 +274,91 @@ async def test_orientation_setting_is_persisted_through_editor_api(
     assert response["success"]
     assert response["result"]["rotation"] == 270
     assert wolink_entry.options["display_rotation"] == 270
+
+
+async def test_saved_design_refresh_uses_the_current_layout_not_the_exported_copy(
+    hass, wolink_entry
+):
+    from custom_components.ble_esl.services import build_write_job_from_data
+
+    designer = hass.data[KEY]
+    hass.states.async_set("binary_sensor.laundry", "on")
+    old = icon_document(rotation=0)
+    data = {"use_saved_design": True}
+    await designer.save(wolink_entry, old)
+    before = await build_write_job_from_data(hass, wolink_entry, data)
+    await designer.save(wolink_entry, icon_document(rotation=37.5))
+    after = await build_write_job_from_data(hass, wolink_entry, data)
+    assert before.image_png != after.image_png
+
+
+async def test_saved_design_service_needs_no_embedded_payload(hass, wolink_entry):
+    from custom_components.ble_esl.services import (
+        WRITE_GUARDED_SERVICE_SCHEMA,
+        WRITE_SERVICE_SCHEMA,
+    )
+
+    for schema in (WRITE_SERVICE_SCHEMA, WRITE_GUARDED_SERVICE_SCHEMA):
+        assert schema({"use_saved_design": True}) == {"use_saved_design": True}
+
+
+async def test_saved_inputs_follow_edits_and_template_dependencies(hass, wolink_entry):
+    designer = hass.data[KEY]
+    events = []
+    hass.bus.async_listen("ble_esl_inputs_changed", lambda event: events.append(event.data))
+    hass.states.async_set("binary_sensor.laundry", "on")
+    hass.states.async_set("sensor.color", "red")
+    source = icon_document(rotation=0)
+    source["elements"][0]["field_templates"] = {"color": "{{ states('sensor.color') }}"}
+    await designer.save(wolink_entry, source)
+    await hass.async_block_till_done()
+    events.clear()
+    hass.states.async_set("sensor.color", "black")
+    await hass.async_block_till_done()
+    assert events == [{"entry_id": wolink_entry.entry_id}]
+    source["elements"][0]["entity_id"] = "binary_sensor.other"
+    source["elements"][0]["field_templates"] = {}
+    await designer.save(wolink_entry, source)
+    await hass.async_block_till_done()
+    events.clear()
+    hass.states.async_set("binary_sensor.laundry", "off")
+    hass.states.async_set("sensor.color", "red")
+    await hass.async_block_till_done()
+    assert events == []
+    hass.states.async_set("binary_sensor.other", "on")
+    await hass.async_block_till_done()
+    assert events == [{"entry_id": wolink_entry.entry_id}]
+
+
+async def test_saved_inputs_retrack_conditional_reads_and_stop_on_unload(hass, wolink_entry):
+    designer = hass.data[KEY]
+    events = []
+    hass.bus.async_listen("ble_esl_inputs_changed", lambda event: events.append(event.data))
+    hass.states.async_set("binary_sensor.laundry", "on")
+    hass.states.async_set("sensor.primary_color", "black")
+    hass.states.async_set("sensor.backup_color", "red")
+    source = icon_document(rotation=0)
+    source["elements"][0]["field_templates"] = {
+        "color": "{{ states('sensor.primary_color') if value == 'on' else states('sensor.backup_color') }}"
+    }
+    await designer.save(wolink_entry, source)
+    await hass.async_block_till_done()
+    events.clear()
+    hass.states.async_set("sensor.backup_color", "white")
+    await hass.async_block_till_done()
+    assert events == []
+    hass.states.async_set("binary_sensor.laundry", "off")
+    await hass.async_block_till_done()
+    events.clear()
+    hass.states.async_set("sensor.backup_color", "black")
+    await hass.async_block_till_done()
+    assert events == [{"entry_id": wolink_entry.entry_id}]
+    designer.inputs.untrack(wolink_entry.entry_id)
+    events.clear()
+    hass.states.async_set("sensor.backup_color", "red")
+    await hass.async_block_till_done()
+    assert events == []
+    designer.inputs.track(wolink_entry.entry_id)
+    hass.states.async_set("sensor.backup_color", "black")
+    await hass.async_block_till_done()
+    assert events == [{"entry_id": wolink_entry.entry_id}]

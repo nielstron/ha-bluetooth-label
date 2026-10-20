@@ -1924,3 +1924,98 @@ for (const service of ["ble_esl.write", "ble_esl.write_guarded"]) {
     expect(decoded.elements[0]).toMatchObject(source.elements[0]);
   });
 }
+
+test("open tag is remembered in the URL across reload and browser navigation", async ({
+  page,
+}) => {
+  await page.locator("[data-action=edit][data-entry=demo-writable]").click();
+  await expect(page).toHaveURL(/tag=demo-writable/);
+  await page.reload();
+  await expect(
+    page.getByRole("combobox", { name: "Tag", exact: true }),
+  ).toHaveValue("demo-writable");
+  await page
+    .getByRole("combobox", { name: "Tag", exact: true })
+    .selectOption("demo-discovery");
+  await expect(page).toHaveURL(/tag=demo-discovery/);
+  await page.goBack();
+  await expect(
+    page.getByRole("combobox", { name: "Tag", exact: true }),
+  ).toHaveValue("demo-writable");
+});
+
+test("saving the tag editor updates the shared design without rewriting the linked automation", async ({
+  page,
+  request,
+}) => {
+  await request.post("/api/config/automation/config/morning", {
+    data: {
+      id: "morning",
+      alias: "Morning",
+      triggers: [
+        { trigger: "time", at: "08:00:00" },
+        {
+          trigger: "event",
+          event_type: "ble_esl_inputs_changed",
+          event_data: { entry_id: "demo-writable" },
+          id: "ble_esl_inputs",
+        },
+      ],
+      conditions: [],
+      mode: "queued",
+      actions: [
+        {
+          action: "ble_esl.write_guarded",
+          target: { device_id: "demo-device-0" },
+          data: {
+            use_saved_design: true,
+            debounce_override_ms: 750,
+          },
+        },
+      ],
+    },
+  });
+  await page.locator("[data-action=edit][data-entry=demo-writable]").click();
+  await page.evaluate(() => {
+    const p = window.manager.editor;
+    p.document = { version: 1, elements: [], background: "white" };
+    p.add("sensor", p.hass.states["sensor.office_temperature"]);
+    p.element.rotation = 37.5;
+    p.edited();
+  });
+  await page
+    .getByRole("button", { name: "Save (unsaved changes)", exact: true })
+    .click();
+  await expect
+    .poll(async () => {
+      const r = await request.get("/api/config/automation/config/morning");
+      return (await r.json()).triggers.find((t) => t.id === "ble_esl_inputs")
+        ?.event_data;
+    })
+    .toEqual({ entry_id: "demo-writable" });
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        async () =>
+          (await window.manager.api("list")).find(
+            (t) => t.entry_id === "demo-writable",
+          ).document.elements[0]?.rotation,
+      ),
+    )
+    .toBe(37.5);
+  const response = await request.get("/api/config/automation/config/morning");
+  const saved = await response.json();
+  expect(saved.triggers).toContainEqual({ trigger: "time", at: "08:00:00" });
+  expect(saved.actions[0].data.debounce_override_ms).toBe(750);
+  expect(saved.actions[0].data.use_saved_design).toBe(true);
+  expect(saved.actions[0].data.design).toBeUndefined();
+  expect(saved.actions[0].data.payload).toBeUndefined();
+  expect(
+    await page.evaluate(
+      async () =>
+        (await window.manager.api("list")).find(
+          (t) => t.entry_id === "demo-writable",
+        ).document.elements[0].rotation,
+    ),
+  ).toBe(37.5);
+});
